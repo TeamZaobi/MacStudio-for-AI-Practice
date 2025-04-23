@@ -1,0 +1,115 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# MCP 服务管理规则 (详细)
+
+本文档提供了管理 Model Context Protocol (MCP) 服务的详细规则和最佳实践，主要基于 `[docs/mcp_services/MCP服务管理指南.md](mdc:docs/mcp_services/MCP服务管理指南.md)`。
+
+## 核心原则
+
+- **结构规范**: **务必**遵循主指南 (`MCP服务管理指南.md`) 中定义的"**路径与结构规范**"，确保项目整洁。
+- **环境一致性与隔离**: 强制使用独立虚拟环境。
+- **配置与代码分离**: 外部化配置，尤其是敏感信息。
+- **自动化**: 尽可能自动化流程。
+- **可维护性与可观测性**: 保持规范、清晰的文档和日志。
+- **安全性**: 遵循最小权限，安全管理密钥。
+
+## 阶段一：本地管理最佳实践 (基于Conda/虚拟环境)
+
+遵循此阶段规则以规范本地 MCP 服务管理。
+
+### 1. 环境隔离与依赖
+
+- **专用环境**: 为每个 MCP 服务创建独立虚拟环境。
+  ```bash
+  # Conda 示例
+  conda create -n mcp_{service_name} python=3.x -y
+  conda activate mcp_{service_name}
+  ```
+- **依赖锁定**: **必须**使用工具锁定依赖版本。
+  - Conda: `environment.yml` + `conda-lock`
+  - Pip: `requirements.txt` + `pip-tools` (pip-compile)
+  - Poetry/PDM: `pyproject.toml` + `lock` file
+- **文档化**: 将锁定的依赖文件纳入版本控制，并在服务 `README.md` 中说明环境设置。
+  - **文件位置**: 环境定义和锁定文件**必须**位于服务根目录并纳入 Git。
+  - **文档化**: 在服务标准文档 (`docs/mcp_services/...`) 中说明环境设置。
+
+### 2. 配置管理
+
+- **客户端配置**: 在客户端指定文件（如 Claude Desktop 的 `claude_desktop_config.json`）中定义服务入口。
+  - **查阅 Cursor 文档确认其配置方式。**
+  - **强制**: **必须**查阅客户端 (Cursor, Claude Desktop) 最新文档确认配置要求。
+  - 仅包含启动服务的基础信息。
+- **服务配置外化**: 将服务特定配置（API端点、参数等）放入 `.env` 或 YAML 文件，通过环境变量或配置文件加载。
+- **文件位置**: 服务自身配置文件 (`.env`, `config.yaml`) 位于服务根目录。
+- **安全**: `.env` 等敏感文件**必须**在 `.gitignore` 中排除。提供 `.env.example` 模板。
+- **版本控制**: 所有非敏感配置文件和环境定义文件纳入 Git。
+
+### 3. 密钥管理
+
+- **严禁硬编码**: 绝不在代码或版本控制的配置文件中存储明文密钥。
+- **安全存储与注入**:
+  - **最低要求**: 通过客户端配置的 `env` 字段（如 `claude_desktop_config.json`）注入环境变量。**确认 Cursor 是否支持。**
+  - **强烈推荐**: 使用操作系统安全存储（macOS Keychain）、本地 Vault 或其他密钥管理工具。
+  - 服务启动时动态读取安全存储并注入环境变量。
+- **防止意外提交**: 使用 `pre-commit` 钩子（如 `ggshield`, `git-secrets`）扫描并阻止含密钥的提交。
+
+### 4. 命令路径可靠性
+
+- **确保客户端能找到命令**: 在客户端配置中优先使用**绝对路径**，或确保命令位于系统 `PATH` 中（如 `/opt/homebrew/bin`, `/usr/local/bin`）。
+- **检查环境变量继承**: 注意 Cursor 和 Claude Desktop 的环境变量继承行为可能不同。
+
+### 5. 文档与日志
+
+- **标准化**: 统一项目结构和服务命名（环境名: `mcp_<service_name>`）。
+- **服务文档**: 为每个服务创建 `[docs/mcp_services/{service_name}.md](mdc:docs/mcp_services/{service_name}.md)`，包含：用途、配置、依赖、启动、示例、排错、版本记录。
+  - **服务文档**: 主要文档**必须**位于 `docs/mcp_services/{service_name}.md`。
+- **日志记录**: 服务优先输出到 stdout/stderr。记录客户端实际日志存储位置。
+- **调试工具**: 使用 `MCP Inspector` 等工具进行测试和调试。
+
+### 6. 其他规范
+
+- **`.gitignore`**: **强制**在项目根目录维护健壮的 `.gitignore` (排除环境、敏感配置、日志、缓存等)。
+- **模型/数据路径**: **强制**通过配置引用标准模型路径 (`/Models/...`)，禁止代码库存储大数据。
+
+## 服务类型管理策略总结
+
+- **`stdio`-based 服务**: 主要遵循阶段一管理。
+- **`sse`/`streamable http` 服务**: 强烈推荐阶段二（Docker Compose）管理。
+- **详情**: 参考主指南 (`MCP服务管理指南.md`) 的阶段四。
+
+## 阶段二：容器化最佳实践 (推荐方向)
+
+采用容器化以获得最佳隔离性、一致性和可移植性。
+
+### 1. 服务容器化 (Dockerfile)
+
+- 为每个服务编写 `Dockerfile`。
+- 使用多阶段构建减小镜像体积。
+- 在 Dockerfile 内使用标准包管理器安装锁定的依赖。
+
+### 2. 编排 (Docker Compose)
+
+- 创建 `docker-compose.yml` 定义所有服务。
+- **镜像**: 指定 `image` 或 `build` context。
+- **卷挂载**: 使用 `volumes` 挂载源代码以实现开发时热重载。
+- **网络**: 定义服务间网络（如果需要）。
+- **密钥管理**: 使用 Docker Compose 的 `secrets` 功能从外部文件安全挂载密钥。
+- **启动/停止**: 使用 `docker compose up -d` / `docker compose down` 管理。
+- **日志**: 使用 `docker compose logs` 查看。
+
+### 3. 客户端集成
+
+- 修改 Cursor/Claude Desktop 配置，使其与容器内服务通信。
+  - **方法**: 可能通过 `docker compose exec <service_name> <command>` 或 `docker compose run --rm <service_name>`。
+  - **关键**: 确保客户端能可靠地启动并与容器内服务进程进行标准输入输出通信。**查阅客户端和 MCP 服务文档确定最佳集成方式。**
+
+## 安全性
+
+- **来源可信**: 仅使用可信来源或自研的服务。
+- **依赖更新**: 定期更新依赖以修复漏洞。
+- **最小权限**: 使用具有最小所需权限的 API 密钥。
+
+**参考**: 详细信息请参阅 `[docs/mcp_services/MCP服务管理指南.md](mdc:docs/mcp_services/MCP服务管理指南.md)`。

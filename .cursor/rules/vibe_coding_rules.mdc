@@ -1,0 +1,356 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Mac Studio M3 Ultra - Vibe Coding Rules
+
+## 1. 概述
+
+本文档定义了Mac Studio M3 Ultra大模型实验平台的Vibe Coding规则，专为Cursor等AI辅助编码工具设计。这些规则提供了关键原则和模式，详细实现请参考相应的文档。
+
+> **重要提示**: 本文档不包含所有细节，而是提供关键指导并引导您查看相关详细文档。
+
+## 2. 文档引用指南
+
+根据不同任务，请参考以下文档：
+
+- **环境管理**: 查看 `[documentation_system.md](mdc:documentation_system.mdc)` 中的"环境级文档"部分，使用 `[环境模板](mdc:documentation_system.mdc#2.-环境级文档)`。
+- **模型处理**: 查看 `[models/README.md](mdc:models/README.md)` 获取模型管理最佳实践，使用 `[模型模板](mdc:documentation_system.mdc#模型文档模板)`。
+- **实验设计**: 查看 `[experiments/README.md](mdc:experiments/README.md)` 了解实验设计和执行标准，使用 `[实验模板](mdc:documentation_system.mdc#实验文档模板)`。
+- **性能优化**: 查看 `[knowledge_base/best_practices.md](mdc:knowledge_base/best_practices.md)` 或相关性能文档获取Apple Silicon优化技巧。
+- **故障排除**: 查看 `[knowledge_base/troubleshooting.md](mdc:knowledge_base/troubleshooting.md)` 获取常见问题解决方案，并贡献新的解决方案。
+- **MCP服务管理**: **务必**参考 `[docs/mcp_services/MCP服务管理指南.md](mdc:docs/mcp_services/MCP服务管理指南.md)` 获取详细的最佳实践。
+- **整体文档结构与标准**: 参考 `[documentation_system.md](mdc:documentation_system.mdc)`。
+
+## 3. 核心编码原则
+
+### 3.1 命名约定
+
+- **文件名**: 小写字母和下划线分隔 (例如: `model_loader.py`)。严格遵循 `[documentation_system.md](mdc:documentation_system.mdc)` 中的文件命名约定。
+- **类名**: 驼峰命名法 (例如: `ModelManager`)
+- **函数和变量**: 小写字母和下划线分隔 (例如: `load_model()`)
+- **常量**: 全大写字母和下划线分隔 (例如: `MAX_BATCH_SIZE`)
+- **环境名**: 描述性名称和下划线分隔 (例如: `llama2_70b_rag`)
+
+### 3.2 导入顺序
+
+```python
+# 标准库导入
+import os
+import sys
+
+# 第三方库导入
+import torch
+import numpy as np
+
+# 本地模块导入
+from utils.logging import setup_logger
+```
+
+### 3.3 文档要求
+
+每个模块、类和函数必须有文档字符串，包括:
+- 简要描述
+- 参数说明
+- 返回值说明
+- 异常说明（如适用）
+
+详细标准请参考 `documentation_system.md`。
+
+### 3.4 文档版本控制
+
+- **强制**: 所有文档（`.md`, `.mdc` 等）**必须**纳入 Git 版本控制。
+- **强制**: 文档的修改应与相关代码或配置的修改在同一次 Commit 中提交，并包含清晰的提交信息，说明文档变更的内容。参考 `[documentation_system.md](mdc:documentation_system.mdc)` 的版本控制部分。
+
+### 3.5 知识库贡献
+
+- **推荐**: 在解决重要问题、发现关键 Bug 或总结出有效最佳实践后，应在 `/knowledge_base/` 目录下创建或更新相应的文档（如 `troubleshooting.md`, `best_practices.md`, `lessons_learned.md`）。参考 `[documentation_system.md](mdc:documentation_system.mdc)` 的知识库管理部分。
+
+### 3.6 资源意识 (特别是大型模型)
+
+- **原则**: 编码时应注意内存、CPU/GPU 使用率等资源消耗，尤其是在处理大型语言模型时。
+- **实践**:
+  - 利用 `asitop`, `htop` 等监控工具观察资源使用情况。
+  - 根据 `[prd.md](mdc:prd.mdc)` 的要求，适时考虑模型量化技术。
+  - 避免不必要的内存占用和计算开销。
+
+## 4. 关键模式和最佳实践
+
+### 4.1 环境管理
+
+*(高优先级 per PRD)*
+```python
+# 创建新环境时使用此模式
+conda create -n {env_name} python=3.10 -y
+conda activate {env_name}
+pip install {packages}
+# 强制锁定依赖
+conda env export > environment_{env_name}.yml # 并考虑 conda-lock
+# 或 pip freeze > requirements_{env_name}.txt (推荐 pip-tools)
+```
+
+每个环境创建后**必须**按照 `[documentation_system.md](mdc:documentation_system.mdc)` 的要求进行文档记录。
+
+### 4.2 模型加载
+
+*(高优先级 per PRD)*
+```python
+# 模型加载的标准模式
+try:
+    # 设置适当的量化参数
+    load_kwargs = {"device_map": "mps"}
+    if model_size > 13:  # 大于13B的模型
+        load_kwargs.update({"load_in_4bit": True})
+
+    # 加载模型
+    model = AutoModelForCausalLM.from_pretrained(model_path, **load_kwargs)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+    return model, tokenizer
+except Exception as e:
+    logger.error(f"模型加载失败: {str(e)}")
+    raise
+```
+
+对于超大模型（如671B DeepSeek），请参考 `models/large_models.md` 获取特殊处理指南。
+
+### 4.3 实验执行
+
+```python
+# 实验执行的标准模式
+def run_experiment(config_path):
+    # 1. 加载配置
+    config = load_config(config_path)
+
+    # 2. 设置随机种子确保可复现性
+    set_seed(config.get("seed", 42))
+
+    # 3. 初始化实验跟踪
+    # 优先使用 wandb，备选 mlflow (per PRD)
+    wandb.init(project=config["project_name"], name=config["experiment_name"], config=config)
+
+    # 4. 执行实验逻辑
+    # ...
+
+    # 5. 记录结果
+    wandb.log({"metric": value})
+```
+
+详细的实验设计和执行标准请参考实验文档。
+
+## 5. MCP服务管理规范 (概述)
+
+**核心原则**: 严格遵循 `[docs/mcp_services/MCP服务管理指南.md](mdc:docs/mcp_services/MCP服务管理指南.md)` 中详细的最佳实践。本节提供关键摘要和强制要求。
+**结构规范**: **务必**同时遵循指南中新增的"**路径与结构规范**"章节，确保项目整洁。
+
+### 5.1 服务命名约定
+
+- **强制**: 简短、描述性、全小写、无特殊字符 (例如: `markitdown`, `context7`)。
+- **推荐**: 相关服务使用一致前缀 (例如: `search-bing`)。
+
+### 5.2 环境隔离与依赖管理 (本地/Conda/其他)
+
+```bash
+# 示例：为MCP服务创建专用Conda环境
+conda create -n mcp_{service_name} python={version} -y
+conda activate mcp_{service_name}
+pip install {required_packages}
+
+# 强制：锁定依赖并导出/提交锁定文件
+# Conda:
+conda env export > environments/mcp_{service_name}.yml
+conda list --explicit > environments/mcp_{service_name}.lock # 或者使用 conda-lock
+# Pip:
+pip freeze > requirements/mcp_{service_name}.txt # 推荐使用 pip-tools 生成
+# Poetry/PDM:
+# poetry lock / pdm lock (自动生成 lock 文件)
+```
+
+- **强制**:
+    - 必须为每个 MCP 服务创建独立的虚拟环境（Conda, venv, Poetry, PDM, NVM 等）。
+    - **必须**使用相应的机制**锁定所有依赖项**的版本（`conda env export`/`conda-lock`, `pip-tools`生成的`requirements.txt`, `poetry.lock`, `pdm.lock`, `package-lock.json` 等），并将锁定文件纳入版本控制。
+    - 服务文档中必须清晰说明环境创建和依赖安装步骤。
+    - **强制**: 环境定义文件 (`environment.yml`, `pyproject.toml`等) 和锁定的依赖文件**必须**存放在对应服务的根目录下 (`mcp_services/{service_name}/`) 并纳入 Git 版本控制。
+    - 服务文档中必须清晰说明环境创建和依赖安装步骤，并引用这些文件。
+- **推荐**: 评估使用`pipx`（简单Python CLI）、`nvm`（Node.js）或**容器化**（见下文及指南阶段二）以获得更好的隔离性和一致性。
+
+### 5.3 配置管理
+
+- **强制**:
+    - 识别并使用客户端（Cursor, Claude Desktop）指定的 MCP 服务配置文件（例如 Claude Desktop 的 `claude_desktop_config.json`）。**务必查阅各客户端文档确认其配置方式。**
+    - 将服务特定的非敏感配置（API端点、行为参数等）**外化**到服务各自的配置文件（如 `.env`, YAML 文件）或通过环境变量注入，避免客户端主配置臃肿。
+    - **强制**: 服务自身配置文件 (`.env`, `config.yaml`) 应位于服务根目录。包含敏感信息的实际配置文件 (`.env`) **必须**在根 `.gitignore` 中排除，**禁止**提交。
+    - 所有非敏感配置文件（客户端MCP配置、服务配置模板、环境定义文件等）**必须**纳入 Git 版本控制。
+- **推荐**: 引入脚本校验客户端 MCP 配置文件的格式正确性。
+- **推荐**: 提供 `.env.example` 或 `config.yaml.template` 作为模板，纳入 Git。
+
+### 5.4 密钥管理 (安全性高优先级)
+
+- **强制**:
+    - **严禁**在代码或版本控制的配置文件中硬编码或明文存储 API 密钥、密码等敏感信息。
+    - **最低安全要求**: 通过客户端配置文件（如 `claude_desktop_config.json` 的 `env` 字段）将密钥作为环境变量传递给服务进程。**确认客户端是否支持此机制。**
+    - **强制要求**: 在 Git 仓库中集成 `pre-commit` 钩子（如 `ggshield`, `git-secrets`）自动扫描并阻止包含敏感信息的提交。
+- **强烈推荐**:
+    - 将密钥存储在更安全的地方：操作系统的安全存储（如 macOS Keychain）、HashiCorp Vault 等。服务启动时动态读取并注入环境变量。
+    - 确保存放密钥的文件或变量具有严格的访问权限，且不被纳入公共版本库。
+
+### 5.5 命令路径可靠性
+
+- **强制**: 确保客户端应用能找到服务启动命令（`conda`, `python`, `node`, 服务脚本等）。
+- **强烈推荐**: 在客户端配置文件中**优先使用命令的绝对路径**，或确保命令通过标准方式（如 Homebrew 安装）位于系统 `PATH` 中，以减少环境依赖问题。**注意检查不同客户端的环境变量继承行为。**
+
+### 5.6 服务文档要求
+
+- **强制**: 每个 MCP 服务**必须**在 `docs/mcp_services/{service_name}.md` 中有详细文档。文档内容需遵循 `MCP服务管理指南.md` 中定义的结构和要求（至少包括：用途、配置、依赖安装、启动命令、示例、版本记录、排错）。
+- **强制**: 每个 MCP 服务的主要详细文档**必须**位于 `docs/mcp_services/{service_name}.md` (遵循指南结构)。服务代码目录内的 README 可保持简洁并链接至此。
+
+### 5.7 安全意识
+
+- **强制**:
+    - 仅使用来源可信的 MCP 服务。
+    - 定期更新服务依赖项，修复已知安全漏洞。
+    - 为服务配置具有**最小所需权限**的 API 密钥或访问令牌。
+
+### 5.8 容器化建议 (推荐方向)
+
+- **推荐**: 考虑将 MCP 服务容器化（使用 `Dockerfile` 和 `Docker Compose`），这是解决环境一致性、依赖隔离和部署问题的**推荐最佳实践方向**。容器化提供了更健壮、可移植的解决方案。详情请参考 `MCP服务管理指南.md` 的阶段二。
+
+### 5.9 服务类型管理策略总结
+
+- **`stdio`-based 服务**: 主要遵循阶段一管理（本地环境、依赖锁定、可靠路径）。客户端负责调用。
+- **`sse`/`streamable http` 服务**: 强烈推荐阶段二（Docker Compose）管理，以实现可靠的生命周期、端口和日志管理。
+- **详情**: 参考 `MCP服务管理指南.md` 的阶段四。
+
+**再次强调**: **请务必参考完整的 `[docs/mcp_services/MCP服务管理指南.md](mdc:docs/mcp_services/MCP服务管理指南.md)` 获取详细的最佳实践、背景解释和实施细节。**
+
+**补充规则**: 配置或调用 MCP 服务前，**必须**查阅相关客户端（Cursor, Claude Desktop）的最新官方文档，确认其特定的配置文件路径、格式、环境变量继承方式及其他集成要求。
+
+### 5.10 `.gitignore` 要求
+
+- **强制**: 项目根目录**必须**包含 `.gitignore` 文件，并遵循 `MCP服务管理指南.md` 中"路径与结构规范"第 10 点的要求，至少排除虚拟环境、敏感配置、日志、缓存及 IDE/OS 特定文件。
+
+### 5.11 模型/数据路径引用
+
+- **强制**: MCP 服务若需访问模型或大型数据集，**必须**通过配置文件（如 `.env`）引用 `Mac Studio.md` 中定义的标准路径 (`/Models/...`)。**禁止**将大型数据文件直接提交到服务代码库。
+
+## 6. Apple Silicon 优化
+
+- 优先使用 MPS 后端而非 CPU
+- 对于大型模型，使用4-bit或8-bit量化
+- 监控内存使用，避免OOM错误
+- 考虑使用MLX框架获得更好的性能
+
+详细优化技巧请参考性能优化文档。
+
+## 7. 常见问题与解决方案
+
+当遇到以下问题时，请参考相应文档：
+
+- **内存不足**: 参考 `knowledge_base/memory_management.md`
+- **模型加载失败**: 参考 `knowledge_base/model_loading.md`
+- **MPS后端问题**: 参考 `knowledge_base/mps_issues.md`
+- **远程连接问题**: 参考 `knowledge_base/remote_access.md`
+
+## 8. Vibe Coding工具调用技巧
+
+### 8.1 分块修改策略
+
+在使用Cursor等AI辅助编码工具时，大量的读写调用容易失败。要提高成功率，请遵循以下原则：
+
+- **小批量修改**: 每次修改不超过200行代码
+- **分步操作**: 将大型文件修改分解为多个小步骤
+- **逐步确认**: 每次修改后确认变更已成功应用
+- **增量修改**: 优先使用增量修改而非全文件替换
+
+示例工作流程：
+
+1. 首先查看文件当前状态
+2. 确定要修改的特定部分（不超过200行）
+3. 只修改该部分，保持其他部分不变
+4. 确认修改成功后再进行下一部分
+
+### 8.2 读写工具调用模式
+
+#### 8.2.1 文件读取
+
+```python
+# 推荐模式：安全读取文件
+def read_file(file_path):
+    """安全地读取文件"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        logger.error(f"文件不存在: {file_path}")
+        return None
+    except Exception as e:
+        logger.error(f"读取文件失败: {str(e)}")
+        return None
+```
+
+#### 8.2.2 文件写入
+
+```python
+# 推荐模式：安全写入文件
+def write_file(file_path, content, mode='w'):
+    """安全地写入文件"""
+    # 创建目录（如果不存在）
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+    try:
+        with open(file_path, mode, encoding='utf-8') as f:
+            f.write(content)
+        return True
+    except Exception as e:
+        logger.error(f"写入文件失败: {str(e)}")
+        return False
+```
+
+#### 8.2.3 JSON数据处理
+
+```python
+# 推荐模式：JSON数据读写
+import json
+
+def load_json(file_path):
+    """加载JSON文件"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"加载JSON失败: {str(e)}")
+        return None
+
+def save_json(file_path, data, indent=2):
+    """保存JSON文件"""
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=indent)
+        return True
+    except Exception as e:
+        logger.error(f"保存JSON失败: {str(e)}")
+        return False
+```
+
+#### 8.2.4 数据流处理
+
+处理大型文件或数据流时，使用迭代器和生成器：
+
+```python
+# 推荐模式：处理大型文件
+def process_large_file(file_path, chunk_size=1024*1024):
+    """分块处理大型文件"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                # 处理数据块
+                process_chunk(chunk)
+        return True
+    except Exception as e:
+        logger.error(f"处理文件失败: {str(e)}")
+        return False
+```
