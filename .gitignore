@@ -57,4 +57,7 @@ env/
 
 # Project specific
 *.zip
-export/ 
+export/
+
+# Node dependencies
+node_modules/ 
